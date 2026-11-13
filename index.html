@@ -5112,6 +5112,7 @@ const PROVIDERS={
   yi:{name:'零一万物 (Yi)',endpoint:'https://api.lingyiwanwu.com/v1/chat/completions',model:'yi-lightning',format:'openai',vision:false},
   baichuan:{name:'百川 (Baichuan)',endpoint:'https://api.baichuan-ai.com/v1/chat/completions',model:'Baichuan4',format:'openai',vision:false},
   mistral:{name:'Mistral',endpoint:'https://api.mistral.ai/v1/chat/completions',model:'mistral-large-latest',format:'openai',vision:false},
+  openrouter:{name:'OpenRouter',endpoint:'https://openrouter.ai/api/v1/chat/completions',model:'anthropic/claude-sonnet-4.5',format:'openai',vision:true},
   custom:{name:'自定义',endpoint:'',model:'',format:'openai',vision:true}
 };
 const NAME_COLORS=['theme','#c9a86a','#c98899','#7fa8d9','#9b8ccc','#7fbfa5','#8a94a8'];
@@ -10489,6 +10490,32 @@ function _injectAnthropicMsgCacheM(chatMsgs,cfg){
   const _bk9=chatMsgs.length-2-24;
   if(_bk9>=0)_mk9(chatMsgs[_bk9]);
 }
+function _orM(cfg,ep){try{ep=String((ep!=null?ep:(cfg&&(cfg.endpoint||'')))||'');if(!ep&&cfg){var p=PROVIDERS[cfg.provider]||PROVIDERS.custom;ep=p.endpoint||''}return /openrouter\.ai/i.test(ep)}catch(e){return false}}
+function _orClaudeM(model){return /claude/i.test(String(model||'').toLowerCase())}
+function _orUrlM(ep){var s=String(ep||'').trim();if(!/openrouter\.ai/i.test(s))return s;return s.replace(/\/messages(\?.*)?$/i,function(_,q){return '/chat/completions'+(q||'')})}
+function _injectOpenRouterCacheM(msgs,cfg,sysTail2){
+  if(!msgs||msgs.length<=1||!cfg||cfg.promptCache===false||!_orClaudeM(cfg.model))return;
+  var cc=_ccObjM(cfg);
+  var i0=(msgs[0]&&msgs[0].role==='system')?0:-1;
+  if(i0>=0){
+    var s=typeof msgs[i0].content==='string'?msgs[i0].content:'';
+    var t2=String(sysTail2||'');
+    if(t2&&s.length>t2.length+2&&s.slice(-t2.length)===t2){
+      var hd=s.slice(0,s.length-t2.length).replace(/\s+$/,'');
+      msgs[i0].content=[{type:'text',text:hd,cache_control:cc},{type:'text',text:t2,cache_control:cc}];
+    }else if(s)msgs[i0].content=[{type:'text',text:s,cache_control:cc}];
+    else if(Array.isArray(msgs[i0].content)&&msgs[i0].content.length){
+      var a=msgs[i0].content.slice(),t=a[a.length-1];
+      if(t&&t.type==='text')a[a.length-1]=Object.assign({},t,{cache_control:cc});
+      msgs[i0].content=a;
+    }
+  }
+  var _mk=function(m){if(!m)return;
+    if(Array.isArray(m.content)){if(m.content.length){var arr=m.content.slice(),tp=arr[arr.length-1];if(tp&&tp.type==='text')arr[arr.length-1]=Object.assign({},tp,{cache_control:cc});m.content=arr}}
+    else if(typeof m.content==='string')m.content=[{type:'text',text:m.content,cache_control:cc}]};
+  _mk(msgs[msgs.length-2]);
+  var _bk=msgs.length-2-24;if(_bk>=0)_mk(msgs[_bk]);
+}
 var _ibOaiCachePrevM={};
 function _ibOaiCacheDiagM(cfg,msgs){
   try{
@@ -10694,7 +10721,7 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     if(useWS)b.tools=(b.tools||[]).concat([{google_search:{}}]);
     body=JSON.stringify(b);
   }else{
-    url=_zpM(cfg,ep)?_oaiUrlM(ep):ep;/* v372-p：地址补全只给智谱，别家照旧原样发（用户定：GLM 的改动不辐射到别家） */
+    url=_zpM(cfg,ep)?_oaiUrlM(ep):(_orM(cfg,ep)?_orUrlM(ep):ep);/* OpenRouter：/messages 在浏览器会撞 CORS，统一改发 chat/completions */
     headers['Authorization']='Bearer '+cfg.apiKey;
     const msgs=(sys?[{role:'system',content:sys}]:[]).concat(_histFor('openai',hist));
     try{if(pa&&pa._chat&&_apdOnM(cfg)){var _lm9=msgs[msgs.length-1],_lh9=hist[hist.length-1];if(_lm9&&_lm9.role==='user'&&_lh9&&_lh9.id){var _st9=(typeof _lm9.content==='string')?_lm9.content:((Array.isArray(_lm9.content)&&!_lh9._eph)?((_lm9.content.filter(function(p){return p&&p.type==='text'}).pop()||{}).text):null);if(typeof _st9==='string'){window._ibSentPendM=window._ibSentPendM||{};window._ibSentPendM[String(cfg.id)]={id:_lh9.id,content:_st9,at:Date.now()}}}}}catch(e){}
@@ -10703,9 +10730,12 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     if(pa&&pa._noThink&&!pa._noThinkOff&&_dsThinkOffM(cfg,ep,model))b.thinking={type:'disabled'};
     try{var _ef=_effPickM(cfg,pa,fmt,ep,model);if(_ef){var _ek=_effKindM(cfg,fmt,ep,model);if(_ek==='qwen'){if(_ef==='off')b.enable_thinking=false;else{b.enable_thinking=true;var _qb={b2k:2048,b8k:8192,b32k:32768}[_ef];if(_qb)b.thinking_budget=_qb}}else if(_ef==='off')b.thinking={type:'disabled'};else b.reasoning_effort=_ef;_effSent=_ef}}catch(e){}
     const _zpLn=_zpM(cfg,ep)&&(!!(pa&&pa._zpLean)||!!_zpLeanM[String(cfg.id||'')]);
-    if(cfg.promptCache!==false&&!_zpLn)b.prompt_cache_key='ib_'+String(cfg.id||'');
+    const _or9=_orM(cfg,ep)&&_orClaudeM(model)&&!(pa&&pa._orLean);
+    if(cfg.promptCache!==false&&!_zpLn){b.prompt_cache_key='ib_'+String(cfg.id||'');
+      if(_or9){b.cache_control=_ccObjM(cfg);var _sid9='ib_'+String(cfg.id||'');b.session_id=_sid9.length>256?_sid9.slice(0,256):_sid9}}
     if(stream&&cfg.promptCache!==false&&!_zpLn)b.stream_options={include_usage:true};/* 缓存追平电脑版：开启提示缓存时请求 usage 尾块；不支持的中转会走下方去参重试 */
     if(useWS&&!_zpLn)b.web_search_options={};
+    if(_or9)try{_injectOpenRouterCacheM(msgs,cfg,_sysTail2)}catch(e){}
     if(cfg.promptCache!==false){try{_ibOaiCacheDiagM(cfg,msgs)}catch(e){}}
     body=JSON.stringify(b);
   }
@@ -10731,6 +10761,10 @@ async function callAI(cfg,hist,sys,onDelta,signal,pa){
     /* 端点不接受搜索参数（4xx 且报错涉及 search；鉴权错除外）→ 去掉搜索参数重发一次 */
     if(useWS&&res.status>=400&&res.status<500&&res.status!==401&&res.status!==403&&/search/i.test(errTxt)){
       return callAI(cfg,_hist0,_sys0,onDelta,signal,Object.assign({},pa||{},{_noWS:true}));
+    }
+    /* OpenRouter 拒收 cache_control / session_id → 去掉缓存附加字段重发一次 */
+    if(!res.ok&&_orM(cfg,ep)&&!(pa&&pa._orLean)&&(res.status===400||res.status===422)&&/(cache_control|session_id)/i.test(errTxt)){
+      return callAI(cfg,_hist0,_sys0,onDelta,signal,Object.assign({},pa||{},{_orLean:true}));
     }
     /* 某些 OpenAI 兼容中转不接受 prompt_cache_key：仅该端点拒绝时去参重发，避免缓存兼容字段反而阻断请求 */
     if(!res.ok&&res.status>=400&&res.status<500&&/prompt_cache_key/i.test(errTxt)){
@@ -13185,6 +13219,7 @@ function _epTidyM(s){
   s=String(s||'').replace(/\s+/g,'');if(!s)return '';
   if(!/^https?:\/\//i.test(s))s='https://'+s.replace(/^\/+/,'');
   s=s.replace(/^(https?:\/\/)\/+/i,'$1').replace(/([^:])\/{2,}/g,'$1/').replace(/\/+$/,'');
+  if(/openrouter\.ai/i.test(s)&&/\/messages(\?.*)?$/i.test(s))s=s.replace(/\/messages(\?.*)?$/i,'/chat/completions$1');
   if(/\/messages(\?.*)?$|generateContent|\/(chat\/)?completions(\?.*)?$|\/responses(\?.*)?$|chatcompletion_v2/i.test(s))return s;
   if(/\/chat$/i.test(s))return s+'/completions';
   var o='';try{o=new URL(s).origin}catch(e){return s}
@@ -13197,6 +13232,7 @@ function _cfgFmtM(cfg){
   var p=PROVIDERS[cfg&&cfg.provider]||PROVIDERS.custom;
   if(!cfg||cfg.provider!=='custom')return p.format||'openai';
   var ep=String(cfg.endpoint||'');
+  if(_orM(cfg,ep))return 'openai';/* OpenRouter 经浏览器只能稳定走 OpenAI 兼容入口 */
   if(/\/messages(\?.*)?$/i.test(ep))return 'anthropic';
   if(/generateContent|generativelanguage\.googleapis\.com/i.test(ep))return 'gemini';
   return 'openai';
@@ -16626,6 +16662,7 @@ function _ibCacheHintM(cfg,inTok,crTok){
     else if(/dashscope|aliyuncs/i.test(ep))tip='百炼隐式缓存自动开启（约 256 tok 起，Qwen3.7 系列约 2000 tok 起），命中概率由服务端判定、官方注明不保证 100%。';
     else if(/googleapis/i.test(ep))tip='Gemini 隐式缓存自 2.5 系列起才有；2.0-flash 等旧型号没有隐式缓存。命中字段为 usageMetadata.cachedContentTokenCount。当前模型：'+mdl;
     else if(/x\.ai/i.test(ep))tip='xAI 提示缓存为服务端自动、无开关；短对话或未达门槛时命中为 0 属正常。';
+    else if(/openrouter\.ai/i.test(ep)&&_orClaudeM(mdl))tip='OpenRouter 上的 Claude 需走 …/chat/completions（本应用已自动附带 cache_control 与 session_id；勿填 /messages）。Anthropic 缓存门槛约 ≥1024 tok，第一条多为写缓存、第二条起才读到缓存。当前模型：'+mdl;
     if(tip)console.info('[IB手机缓存诊断] 命中为 0 的可能原因（'+(cfg.provider||'该服务商')+'）：'+tip);
   }catch(e){}
 }
